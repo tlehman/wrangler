@@ -51,7 +51,7 @@ type PCIDeviceStatus struct {
 	Address           string   `json:"address"`
 	VendorId          string   `json:"vendorId"`
 	DeviceId          string   `json:"deviceId"`
-	Node              Node     `json:"node"`
+	NodeName          string   `json:"nodeName"`
 	Description       string   `json:"description"`
 	KernelDriverInUse string   `json:"kernelDriverInUse,omitempty"`
 	KernelModules     []string `json:"kernelModules"`
@@ -59,12 +59,6 @@ type PCIDeviceStatus struct {
 
 type PCIDeviceSpec struct {
 }
-
-type Node struct {
-	SystemUUID string `json:"systemUUID"`
-	Name       string `json:"name"`
-}
-
 ```
 
 
@@ -190,3 +184,175 @@ and more under `pkg/`.
 go generate
 ```
     
+
+## Write out CRDs
+
+Open up `pkg/codegen/main.go` and add something like this diff:
+
+```diff
++++ b/pkg/codegen/main.go
+@@ -1,8 +1,11 @@
+ package main
+ 
+ import (
++       "fmt"
+        "os"
+ 
++       "github.com/harvester/pcidevices/pkg/crd"
++
+        controllergen "github.com/rancher/wrangler/pkg/controller-gen"
+        "github.com/rancher/wrangler/pkg/controller-gen/args"
+ 
+@@ -11,6 +14,14 @@ import (
+ )
+ 
+ func main() {
++       if len(os.Args) > 2 && os.Args[1] == "crds" {
++               fmt.Println("Writing CRDs to", os.Args[2])
++               if err := crd.WriteFile(os.Args[2]); err != nil {
++                       panic(err)
++               }
++               return
++       }
++
+```
+
+Notice that new import? Need to make that too:
+
+### Create the `pkg/crd/` module
+
+```shell
+mkdir -p pkg/crd/
+touch pkg/crd/crd.go
+```
+
+Then make the crd.go file:
+
+```go
+package crd
+
+import (
+	"context"
+	"io"
+	"os"
+	"path/filepath"
+
+	devices "github.com/harvester/pcidevices/pkg/apis/devices.harvesterhci.io/v1beta1"
+
+	"github.com/rancher/wrangler/pkg/crd"
+	"github.com/rancher/wrangler/pkg/yaml"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
+)
+
+func WriteFile(filename string) error {
+	if err := os.MkdirAll(filepath.Dir(filename), 0755); err != nil {
+		return err
+	}
+	f, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	return Print(f)
+}
+
+func Print(out io.Writer) error {
+	obj, err := Objects(false)
+	if err != nil {
+		return err
+	}
+	data, err := yaml.Export(obj...)
+	if err != nil {
+		return err
+	}
+
+	objV1Beta1, err := Objects(true)
+	if err != nil {
+		return err
+	}
+	dataV1Beta1, err := yaml.Export(objV1Beta1...)
+	if err != nil {
+		return err
+	}
+
+	data = append([]byte("{{- if .Capabilities.APIVersions.Has \"apiextensions.k8s.io/v1\" -}}\n"), data...)
+	data = append(data, []byte("{{- else -}}\n---\n")...)
+	data = append(data, dataV1Beta1...)
+	data = append(data, []byte("{{- end -}}")...)
+	_, err = out.Write(data)
+	return err
+}
+
+func Objects(v1beta1 bool) (result []runtime.Object, err error) {
+	for _, crdDef := range List() {
+		if v1beta1 {
+			crd, err := crdDef.ToCustomResourceDefinitionV1Beta1()
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, crd)
+		} else {
+			crd, err := crdDef.ToCustomResourceDefinition()
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, crd)
+		}
+	}
+	return
+}
+
+func List() []crd.CRD {
+	return []crd.CRD{
+		newCRD(&devices.PCIDevice{}, func(c crd.CRD) crd.CRD {
+			c.NonNamespace = true
+			return c.
+				WithColumn("Address", ".status.address").
+				WithColumn("VendorId", ".status.vendorId").
+				WithColumn("DeviceId", ".status.deviceId").
+				WithColumn("NodeName", ".status.nodeName").
+				WithColumn("Description", ".status.description").
+				WithColumn("KernelDriverInUse", ".kernelDriverInUse").
+				WithColumn("KernelModules", ".kernelModules")
+		}),
+	}
+}
+
+func Create(ctx context.Context, cfg *rest.Config) error {
+	factory, err := crd.NewFactoryFromClient(cfg)
+	if err != nil {
+		return err
+	}
+
+	return factory.BatchCreateCRDs(ctx, List()...).BatchWait()
+}
+
+func newCRD(obj interface{}, customize func(crd.CRD) crd.CRD) crd.CRD {
+	crd := crd.CRD{
+		GVK: schema.GroupVersionKind{
+			Group:   "devices.harvesterhci.io",
+			Version: "v1beta1",
+		},
+		Status:       true,
+		SchemaObject: obj,
+	}
+	if customize != nil {
+		crd = customize(crd)
+	}
+	return crd
+}
+
+```
+
+And re-run `go generate`, it should generate the following files:
+
+```
+charts
+└── pcidevices
+    └── templates
+        └── crds.yaml
+```
+
