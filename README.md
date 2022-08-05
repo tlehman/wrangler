@@ -8,6 +8,10 @@ looks like to write a controller with this framework refer to
 [main.go](https://github.com/rancher/wrangler-sample/blob/master/main.go) and [controller.go](https://github.com/rancher/wrangler-sample/blob/master/controller.go) in
  the [sample](https://github.com/rancher/wrangler-sample).
  
+Getting Started
+------------
+Click [here](docs/tutorial.md) for a tutorial on how to write a controller with Wrangler.
+
 How it works
 ------------
 
@@ -24,7 +28,7 @@ controller looks as follows
 To use the controller all one needs to do is register simple OnChange handlers.  Also in the
 interface is access to the client and caches in a simple flat API.
 
-```golang
+```go
 type FooController interface {
 	FooClient
 
