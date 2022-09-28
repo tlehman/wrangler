@@ -88,7 +88,10 @@ EOF
 
 ## Create your codegen main.go
 
-Import Wrangler's controllergen
+Import Wrangler's controllergen, when `generate.go` runs this codegen code, it will 
+generate the controller interfaces and put it into the `OutputPackage`. The preferred 
+way to use this is to make a `pkg/controller` for the implementation and then 
+import the generated interface.
 
 ```shell
 mkdir -p pkg/codegen/
@@ -114,7 +117,7 @@ func main() {
     os.Unsetenv("GOPATH")
     controllergen.Run(
         args.Options{
-            OutputPackage: "github.com/harvester/pcidevices",
+            OutputPackage: "github.com/harvester/pcidevices/pkg/generated",
             Boilerplate: "scripts/boilerplate.go.txt",
             Groups: map[string]args.Group{
                 "devices.harvesterhci.io": {
@@ -356,3 +359,30 @@ charts
         └── crds.yaml
 ```
 
+    
+## Create the controller implementation, use the generated interfaces
+
+```go 
+package pcidevice
+
+import (
+	ctl "github.com/harvester/pcidevices/pkg/generated/controllers/devices.harvesterhci.io/v1beta1"
+)
+
+type Controller struct {
+	PCIDevices ctl.PCIDeviceController
+}
+
+```
+
+Then create a `Register` function to be called from main.go
+
+
+In main.go we need to register. 
+But before we can register, we need to make the controller and the kubeconfig
+the kubeconfig is passed in through the command line flags, so now we 
+need to set up the command line flags
+
+
+## Start the controllers
+## Register the scheme
